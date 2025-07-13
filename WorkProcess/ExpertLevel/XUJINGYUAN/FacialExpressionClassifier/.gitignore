@@ -1,0 +1,5 @@
+dataset/
+__pycache__/
+swanlog/
+results/
+test_images/

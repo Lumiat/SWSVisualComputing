@@ -107,20 +107,19 @@ class RAFDBOriginalDataset(BaseDataset):
         
     @staticmethod
     def get_transforms(split='train'):
-        return BaseDataset.get_transforms(split, input_size=75)
-
-class RAFDBKeypointDataset(BaseDataset):
-    """RAF-DB Keypoint数据集"""
+        return BaseDataset.get_transforms(split, input_size=75)    
+class AffectNetOriginalDataset(BaseDataset):
+    """AffectNet Original数据集"""
     
     def __init__(self, root_dir, split='train', transform=None):
         super().__init__(root_dir, split, transform)
         
     @staticmethod
     def get_transforms(split='train'):
-        return BaseDataset.get_transforms(split, input_size=75)
-    
-class AffectNetDataset(BaseDataset):
-    """RAF-DB Keypoint数据集"""
+        return BaseDataset.get_transforms(split, input_size=96)
+
+class AffectNetAlignedOriginalDataset(BaseDataset):
+    """AffectNet Aligned Original Keypoint数据集"""
     
     def __init__(self, root_dir, split='train', transform=None):
         super().__init__(root_dir, split, transform)
@@ -317,8 +316,8 @@ def get_dataset_class(dataset_name):
         'fer2013_original': FER2013OriginalDataset,
         'fer2013_cleaned_original': FER2013CleanedOriginalDataset,
         'raf-db_original': RAFDBOriginalDataset,
-        'raf-db_keypoint': RAFDBKeypointDataset,
-        'affectnet_original': AffectNetDataset,
+        'affectnet_original': AffectNetOriginalDataset,
+        'affectnet_aligned_original': AffectNetAlignedOriginalDataset,
         'ferplus_original': FERPlusDataset
     }
     return dataset_classes.get(dataset_name)

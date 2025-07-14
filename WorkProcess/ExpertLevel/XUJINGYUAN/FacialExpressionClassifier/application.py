@@ -201,7 +201,7 @@ def get_face_bbox_from_detection(detection, image_shape):
 def main():
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='apply real-time facial expression recognition')
-    parser.add_argument('--model', choices=['fer2013', 'raf-db', 'fer2013_cleaned', 'affectnet', 'ferplus'], 
+    parser.add_argument('--model', choices=['fer2013', 'raf-db', 'fer2013_cleaned', 'affectnet', 'affectnet_aligned', 'ferplus'], 
                        required=True, help='choose model: fer2013, raf-db, fer2013_cleaned, affectnet or ferplus')
     parser.add_argument('--window_size', type=int, default=5, 
                        help='滑动窗口大小，用于稳定表情识别结果 (default: 5)')
@@ -221,7 +221,10 @@ def main():
         MODEL_PATH = './checkpoints/mobilenet_v3_fer2013_cleaned_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'
         INPUT_SIZE = 48
     elif args.model == 'affectnet':
-        MODEL_PATH = './checkpoints/mobilenet_v3_affectnet_original_epochs_100_scheduler_cosine_annealing_lr_0.0005.pth'
+        MODEL_PATH = './checkpoints/mobilenet_v3_affectnet_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'
+        INPUT_SIZE = 96
+    elif args.model == 'affectnet_aligned':
+        MODEL_PATH = './checkpoints/mobilenet_v3_affectnet_aligned_original.pth'
         INPUT_SIZE = 96
     elif args.model == 'ferplus':
         MODEL_PATH = './checkpoints/mobilenet_v3_ferplus_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'

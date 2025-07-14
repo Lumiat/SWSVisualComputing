@@ -10,8 +10,8 @@ def main():
     parser = argparse.ArgumentParser(description='MobileNetV3 面部表情识别训练')
     parser.add_argument('--dataset', type=str, required=True,
                         choices=['fer2013_original', 'fer2013_cleaned_original', 
-                                'raf-db_original', 'raf-db_keypoint',
-                                'affectnet_original', 'ferplus_original'],
+                                'raf-db_original', 'affectnet_original', 
+                                'affectnet_aligned_original', 'ferplus_original'],
                         help='选择数据集')
     parser.add_argument('--batch-size', type=int, default=32,
                         help='批大小 (default: 32)')

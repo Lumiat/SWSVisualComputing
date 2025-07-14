@@ -14,15 +14,13 @@ from collections import deque, Counter
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
 
-# 表情标签和对应颜色
-EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprised', 'neutral']
 EMOTION_COLORS = {
     'angry': (0, 0, 255),      # 红色
     'sad': (255, 0, 0),        # 蓝色
     'neutral': (0, 255, 0),    # 绿色
     'happy': (255, 0, 255),    # 粉色
     'disgust': (128, 0, 128),  # 紫色
-    'surprised': (0, 165, 255), # 橙色
+    'surprise': (0, 165, 255), # 橙色
     'fear': (255, 255, 0)      # 黄色
 }
 
@@ -30,7 +28,7 @@ class EmotionStabilizer:
     """
     表情识别结果稳定器，用于减少闪动
     """
-    def __init__(self, window_size=3, mode='confidence'):
+    def __init__(self, args):
         """
         初始化稳定器
         
@@ -38,9 +36,9 @@ class EmotionStabilizer:
             window_size (int): 滑动窗口大小，默认为5帧
             mode (str): 判断模式，'confidence' 或 'frequency'
         """
-        self.window_size = window_size
-        self.mode = mode
-        self.predictions = deque(maxlen=window_size)  # 存储最近的预测结果
+        self.window_size = args.window_size
+        self.mode = args.mode
+        self.predictions = deque(maxlen=args.window_size)  # 存储最近的预测结果
         
     def add_prediction(self, emotion, confidence):
         """
@@ -96,7 +94,7 @@ class EmotionStabilizer:
         return len(self.predictions) >= min(3, self.window_size)  # 至少需要3帧或窗口大小的帧数
 
 class EmotionRecognizer:
-    def __init__(self, model_path, device='cpu', input_size=48):
+    def __init__(self, model_path, args, device='cpu', input_size=48):
         """
         初始化表情识别器
         
@@ -106,6 +104,12 @@ class EmotionRecognizer:
         """
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         
+        # 表情结果映射
+        if args.model == 'ferplus':
+            self.emotion_labels = ['neutral', 'happy', 'surprise', 'sad', 'angry', 'disgust', 'fear']  # 根据实际的FER+标签调整
+        else:
+            self.emotion_labels = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
+
         # 创建模型实例
         self.model = MobileNetV3ForExpression(num_classes=7, pretrained=False)
         
@@ -155,7 +159,7 @@ class EmotionRecognizer:
                 probabilities = F.softmax(outputs, dim=1)
                 confidence, predicted = torch.max(probabilities, 1)
                 
-                emotion_label = EMOTION_LABELS[predicted.item()]
+                emotion_label = self.emotion_labels[predicted.item()]
                 confidence_score = confidence.item()
                 
                 return emotion_label, confidence_score
@@ -197,11 +201,11 @@ def get_face_bbox_from_detection(detection, image_shape):
 def main():
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='apply real-time facial expression recognition')
-    parser.add_argument('--model', choices=['fer2013', 'raf-db', 'fer2013_cleaned', 'affectnet'], 
-                       required=True, help='choose model: fer2013, raf-db, fer2013_cleaned or affectnet')
+    parser.add_argument('--model', choices=['fer2013', 'raf-db', 'fer2013_cleaned', 'affectnet', 'ferplus'], 
+                       required=True, help='choose model: fer2013, raf-db, fer2013_cleaned, affectnet or ferplus')
     parser.add_argument('--window_size', type=int, default=5, 
                        help='滑动窗口大小，用于稳定表情识别结果 (default: 5)')
-    parser.add_argument('--mode', choices=['confidence', 'frequency'], default='confidence',
+    parser.add_argument('--mode', choices=['confidence', 'frequency'], default='frequency',
                        help='表情判断模式: confidence (置信度最高) 或 frequency (出现次数最多) (default: confidence)')
     
     args = parser.parse_args()
@@ -219,20 +223,24 @@ def main():
     elif args.model == 'affectnet':
         MODEL_PATH = './checkpoints/mobilenet_v3_affectnet_original_epochs_100_scheduler_cosine_annealing_lr_0.0005.pth'
         INPUT_SIZE = 96
+    elif args.model == 'ferplus':
+        MODEL_PATH = './checkpoints/mobilenet_v3_ferplus_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'
+        INPUT_SIZE = 48
+
         
     if not os.path.exists(MODEL_PATH):
         print(f"模型文件不存在: {MODEL_PATH}")
         return
     
     try:
-        emotion_recognizer = EmotionRecognizer(MODEL_PATH, input_size=INPUT_SIZE)
+        emotion_recognizer = EmotionRecognizer(MODEL_PATH, args, input_size=INPUT_SIZE)
         print("表情识别器初始化成功")
     except Exception as e:
         print(f"模型加载失败: {e}")
         return
     
     # 初始化表情稳定器
-    emotion_stabilizer = EmotionStabilizer(window_size=args.window_size, mode=args.mode)
+    emotion_stabilizer = EmotionStabilizer(args)
     mode_desc = "置信度最高" if args.mode == 'confidence' else "出现次数最多"
     print(f"表情稳定器初始化成功，窗口大小: {args.window_size}, 模式: {mode_desc}")
     

@@ -10,6 +10,185 @@ import time
 from tqdm import tqdm
 import io
 
+class MASLFLoss(nn.Module):
+    """多标注者软标签融合损失函数"""
+    
+    def __init__(self, alpha=0.5, beta=0.1, temperature=2.0):
+        super(MASLFLoss, self).__init__()
+        self.alpha = alpha  # 硬软标签平衡参数
+        self.beta = beta    # 一致性权重参数
+        self.temperature = temperature
+        
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.kl_loss = nn.KLDivLoss(reduction='batchmean')
+    
+    def forward(self, logits, hard_labels, soft_labels, epoch=None, total_epochs=None):
+        """
+        Args:
+            logits: 模型输出 [batch_size, num_classes]
+            hard_labels: 硬标签 [batch_size]
+            soft_labels: 软标签 [batch_size, num_classes]
+            epoch: 当前epoch
+            total_epochs: 总epoch数
+        """
+        # 硬标签损失
+        hard_loss = self.ce_loss(logits, hard_labels)
+        
+        # 软标签损失
+        log_probs = nn.functional.log_softmax(logits / self.temperature, dim=1)
+        soft_loss = self.kl_loss(log_probs, soft_labels)
+        
+        # 一致性正则化损失
+        consistency_loss = self._compute_consistency_loss(logits, soft_labels)
+        
+        # 动态调整alpha参数
+        if epoch is not None and total_epochs is not None:
+            # 训练初期更依赖软标签，后期更依赖硬标签
+            dynamic_alpha = min(0.8, 0.2 + 0.6 * (epoch / total_epochs))
+        else:
+            dynamic_alpha = self.alpha
+        
+        # 总损失
+        total_loss = (dynamic_alpha * hard_loss + 
+                     (1 - dynamic_alpha) * soft_loss + 
+                     self.beta * consistency_loss)
+        
+        return total_loss, hard_loss, soft_loss, consistency_loss
+    
+    def _compute_consistency_loss(self, logits, soft_labels):
+        """计算一致性正则化损失"""
+        # 计算预测分布与软标签分布的JS散度
+        pred_probs = nn.functional.softmax(logits, dim=1)
+        
+        # Jensen-Shannon散度
+        m = 0.5 * (pred_probs + soft_labels)
+        js_div = 0.5 * (nn.functional.kl_div(nn.functional.log_softmax(logits, dim=1), m, reduction='batchmean') +
+                       nn.functional.kl_div(torch.log(soft_labels + 1e-8), m, reduction='batchmean'))
+        
+        return js_div
+
+def train_epoch_with_soft_labels(model, train_loader, criterion, optimizer, device, epoch, total_epochs):
+    """使用软标签的训练epoch"""
+    model.train()
+    running_loss = 0.0
+    running_hard_loss = 0.0
+    running_soft_loss = 0.0
+    running_consistency_loss = 0.0
+    correct = 0
+    total = 0
+    
+    pbar = tqdm(train_loader, desc=f'Epoch {epoch+1} Training')
+    
+    for batch_idx, batch_data in enumerate(pbar):
+        if len(batch_data) == 3:  # FERPlus数据集
+            data, hard_target, soft_target = batch_data
+            data = data.to(device)
+            hard_target = hard_target.to(device)
+            soft_target = soft_target.to(device)
+            
+            optimizer.zero_grad()
+            output = model(data)
+            
+            # 使用MASLF损失
+            loss, hard_loss, soft_loss, consistency_loss = criterion(
+                output, hard_target, soft_target, epoch, total_epochs
+            )
+            
+            running_hard_loss += hard_loss.item()
+            running_soft_loss += soft_loss.item()
+            running_consistency_loss += consistency_loss.item()
+            
+        else:  # 其他数据集
+            data, target = batch_data
+            data, target = data.to(device), target.to(device)
+            
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, target)
+            hard_target = target
+        
+        loss.backward()
+        optimizer.step()
+        
+        running_loss += loss.item()
+        _, predicted = torch.max(output.data, 1)
+        total += hard_target.size(0)
+        correct += (predicted == hard_target).sum().item()
+        
+        # 更新进度条
+        if len(batch_data) == 3:
+            pbar.set_postfix({
+                'Loss': f'{running_loss/(batch_idx+1):.4f}',
+                'Hard': f'{running_hard_loss/(batch_idx+1):.4f}',
+                'Soft': f'{running_soft_loss/(batch_idx+1):.4f}',
+                'Acc': f'{100.*correct/total:.2f}%'
+            })
+        else:
+            pbar.set_postfix({
+                'Loss': f'{running_loss/(batch_idx+1):.4f}',
+                'Acc': f'{100.*correct/total:.2f}%'
+            })
+    
+    epoch_loss = running_loss / len(train_loader)
+    epoch_acc = 100. * correct / total
+    
+    loss_details = {
+        'total_loss': epoch_loss,
+        'hard_loss': running_hard_loss / len(train_loader) if len(batch_data) == 3 else epoch_loss,
+        'soft_loss': running_soft_loss / len(train_loader) if len(batch_data) == 3 else 0,
+        'consistency_loss': running_consistency_loss / len(train_loader) if len(batch_data) == 3 else 0
+    }
+    
+    return epoch_loss, epoch_acc, loss_details
+
+def validate_epoch_with_soft_labels(model, val_loader, criterion, device, epoch, total_epochs):
+    """使用软标签的验证epoch"""
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    all_predictions = []
+    all_targets = []
+    
+    with torch.no_grad():
+        pbar = tqdm(val_loader, desc=f'Epoch {epoch+1} Validation')
+        
+        for batch_idx, batch_data in enumerate(pbar):
+            if len(batch_data) == 3:  # FERPlus数据集
+                data, hard_target, soft_target = batch_data
+                data = data.to(device)
+                hard_target = hard_target.to(device)
+                soft_target = soft_target.to(device)
+                
+                output = model(data)
+                loss, _, _, _ = criterion(output, hard_target, soft_target, epoch, total_epochs)
+                
+            else:  # 其他数据集
+                data, target = batch_data
+                data, target = data.to(device), target.to(device)
+                
+                output = model(data)
+                loss = criterion(output, target)
+                hard_target = target
+            
+            running_loss += loss.item()
+            _, predicted = torch.max(output.data, 1)
+            total += hard_target.size(0)
+            correct += (predicted == hard_target).sum().item()
+            
+            all_predictions.extend(predicted.cpu().numpy())
+            all_targets.extend(hard_target.cpu().numpy())
+            
+            pbar.set_postfix({
+                'Loss': f'{running_loss/(batch_idx+1):.4f}',
+                'Acc': f'{100.*correct/total:.2f}%'
+            })
+    
+    epoch_loss = running_loss / len(val_loader)
+    epoch_acc = 100. * correct / total
+    
+    return epoch_loss, epoch_acc, all_predictions, all_targets
+
 def train_epoch(model, train_loader, criterion, optimizer, device, epoch):
     """训练一个epoch"""
     model.train()
@@ -96,8 +275,15 @@ def train_model(model, train_loader, val_loader, device, args):
         }
     )
     
+    # 确定是否使用软标签
+    use_soft_labels = args.dataset == 'ferplus_original'
+
     # 损失函数和优化器
-    criterion = nn.CrossEntropyLoss()
+    if use_soft_labels:
+        criterion = MASLFLoss(alpha=0.5, beta=0.1, temperature=2.0)
+    else:
+        criterion = nn.CrossEntropyLoss()
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     if args.scheduler == 'reduce_lr_on_plateau':
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
@@ -125,12 +311,23 @@ def train_model(model, train_loader, val_loader, device, args):
         print('-' * 50)
         
         # 训练阶段
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device, epoch)
+        if use_soft_labels:
+            train_loss, train_acc, loss_details = train_epoch_with_soft_labels(
+                model, train_loader, criterion, optimizer, device, epoch, args.epochs
+            )
+        else:
+            train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device, epoch)
+            loss_details = {'total_loss': train_loss}
         
         # 验证阶段
-        val_loss, val_acc, val_predictions, val_targets = validate_epoch(
-            model, val_loader, criterion, device, epoch
-        )
+        if use_soft_labels:
+            val_loss, val_acc, val_predictions, val_targets = validate_epoch_with_soft_labels(
+                model, val_loader, criterion, device, epoch, args.epochs
+            )
+        else:
+            val_loss, val_acc, val_predictions, val_targets = validate_epoch(
+                model, val_loader, criterion, device, epoch
+            )
         
         # 学习率调整
         if args.scheduler == 'reduce_lr_on_plateau':

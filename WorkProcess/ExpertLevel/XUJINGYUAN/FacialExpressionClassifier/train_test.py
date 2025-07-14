@@ -427,8 +427,15 @@ def test_model(model, test_loader, device, dataset_name, output_filename=None):
     with torch.no_grad():
         pbar = tqdm(test_loader, desc='Testing')
         
-        for data, target in pbar:
-            data, target = data.to(device), target.to(device)
+        for batch_data in pbar:
+            # 根据数据集类型处理不同的数据格式
+            if len(batch_data) == 3:  # FERPlus数据集：包含软标签
+                data, hard_target, soft_target = batch_data
+                data = data.to(device)
+                target = hard_target.to(device)  # 测试时使用硬标签
+            else:  # 其他数据集：只有硬标签
+                data, target = batch_data
+                data, target = data.to(device), target.to(device)
             
             output = model(data)
             _, predicted = torch.max(output.data, 1)

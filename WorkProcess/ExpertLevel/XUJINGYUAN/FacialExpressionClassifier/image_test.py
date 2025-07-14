@@ -312,7 +312,7 @@ def main():
         model_path = './checkpoints/mobilenet_v3_fer2013_cleaned_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'
         input_size = 48
     elif args.model == 'affectnet':
-        model_path = './checkpoints/mobilenet_v3_affectnet_original_epochs_100_scheduler_cosine_annealing_lr_0.0005.pth'
+        model_path = './checkpoints/mobilenet_v3_affectnet_original_epochs_100_scheduler_cosine_annealing_lr_0.001.pth'
         input_size = 96
     
     if not os.path.exists(model_path):
